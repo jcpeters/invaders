@@ -10,12 +10,11 @@
 const { initGame } = require('./main');
 
 describe('Space Invaders Game', () => {
-  let canvas, ctx, game;
+  let canvas, game;
 
   beforeEach(() => {
     document.body.innerHTML = '<canvas id="gameCanvas" width="480" height="640"></canvas>';
     canvas = document.getElementById('gameCanvas');
-    ctx = canvas.getContext('2d');
     game = initGame(canvas);
     game.reset();
   });

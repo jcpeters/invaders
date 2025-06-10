@@ -2,7 +2,9 @@
 // Only access DOM if running in browser
 const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
 let canvas, ctx;
-if (isBrowser) {
+// Only start the game loop if running in a real browser environment
+// (i.e. not under Jest/node where `module` is defined)
+if (isBrowser && typeof module === 'undefined') {
   canvas = document.getElementById('gameCanvas');
   ctx = canvas ? canvas.getContext('2d') : undefined;
 }
@@ -28,7 +30,10 @@ const ENEMY_VERTICAL_SPEED = .25; // 1 = normal, 2 = double, 0.5 = half
 function initGame(canvasEl) {
   // Use provided canvas or default to DOM
   const canvas = canvasEl || (typeof document !== 'undefined' ? document.getElementById('gameCanvas') : undefined);
-  const ctx = canvas ? canvas.getContext('2d') : undefined;
+  let ctx;
+  if (canvas && typeof module === 'undefined') {
+    ctx = canvas.getContext('2d');
+  }
 
   // Game state
   let leftPressed = false;
@@ -175,8 +180,9 @@ function initGame(canvasEl) {
   };
 }
 
-// Only run the game loop in the browser
-if (isBrowser) {
+// Only run the game loop when executed directly in a browser
+// Avoid starting the loop when the file is loaded under Jest/Node
+if (isBrowser && typeof module === 'undefined') {
   const game = initGame();
   function drawPlayer() {
     ctx.fillStyle = game.player.color;
