@@ -25,6 +25,10 @@ const ENEMY_X_OFFSET = 30;
 const ENEMY_Y_OFFSET = 40;
 const ENEMY_SPEED = 1;
 const ENEMY_VERTICAL_SPEED = .25; // 1 = normal, 2 = double, 0.5 = half
+const ENEMY_BULLET_WIDTH = 4;
+const ENEMY_BULLET_HEIGHT = 10;
+const ENEMY_BULLET_SPEED = 5;
+const MAX_LIVES = 3;
 
 // --- Refactor for testability ---
 function initGame(canvasEl) {
@@ -40,6 +44,8 @@ function initGame(canvasEl) {
   let rightPressed = false;
   let spacePressed = false;
   let gameOver = false;
+  let lives = MAX_LIVES;
+  let score = 0;
   const player = {
     x: canvas ? canvas.width / 2 - PLAYER_WIDTH / 2 : 0,
     y: canvas ? canvas.height - PLAYER_HEIGHT - 10 : 0,
@@ -48,6 +54,7 @@ function initGame(canvasEl) {
     color: '#0f0',
   };
   let bullets = [];
+  let enemyBullets = [];
   let enemies = [];
   let enemyDirection = 1;
 
@@ -79,12 +86,25 @@ function initGame(canvasEl) {
     bullets = bullets.filter(bullet => bullet.y > 0);
   }
 
+  function moveEnemyBullets() {
+    enemyBullets.forEach(b => {
+      b.y += ENEMY_BULLET_SPEED;
+    });
+    enemyBullets = enemyBullets.filter(b => b.y < (canvas ? canvas.height : 640));
+  }
+
   function moveEnemies() {
     let shouldReverse = false;
     enemies.forEach(enemy => {
       if (!enemy.alive) return;
       enemy.x += ENEMY_SPEED * enemyDirection;
       if (enemy.x <= 0 || enemy.x + enemy.width >= (canvas ? canvas.width : 480)) shouldReverse = true;
+      if (Math.random() < 0.01) {
+        enemyBullets.push({
+          x: enemy.x + enemy.width / 2 - ENEMY_BULLET_WIDTH / 2,
+          y: enemy.y + enemy.height,
+        });
+      }
     });
     if (shouldReverse) {
       enemyDirection *= -1;
@@ -115,8 +135,21 @@ function initGame(canvasEl) {
         ) {
           enemy.alive = false;
           bullets.splice(bIdx, 1);
+          score += 10;
         }
       });
+    });
+    enemyBullets.forEach((bullet, bIdx) => {
+      if (
+        bullet.x < player.x + player.width &&
+        bullet.x + ENEMY_BULLET_WIDTH > player.x &&
+        bullet.y < player.y + player.height &&
+        bullet.y + ENEMY_BULLET_HEIGHT > player.y
+      ) {
+        enemyBullets.splice(bIdx, 1);
+        lives -= 1;
+        if (lives <= 0) gameOver = true;
+      }
     });
     enemies.forEach(enemy => {
       if (
@@ -125,7 +158,9 @@ function initGame(canvasEl) {
         enemy.x < player.x + player.width &&
         enemy.x + enemy.width > player.x
       ) {
-        gameOver = true;
+        lives -= 1;
+        enemy.alive = false;
+        if (lives <= 0) gameOver = true;
       }
     });
   }
@@ -150,7 +185,12 @@ function initGame(canvasEl) {
     ENEMY_VERTICAL_SPEED,
     get player() { return player; },
     get bullets() { return bullets; },
+    get enemyBullets() { return enemyBullets; },
     get enemies() { return enemies; },
+    get lives() { return lives; },
+    set lives(v) { lives = v; },
+    get score() { return score; },
+    set score(v) { score = v; },
     get leftPressed() { return leftPressed; },
     set leftPressed(v) { leftPressed = v; },
     get rightPressed() { return rightPressed; },
@@ -162,6 +202,7 @@ function initGame(canvasEl) {
     createEnemies,
     movePlayer,
     moveBullets,
+    moveEnemyBullets,
     moveEnemies,
     shootBullet,
     checkCollisions,
@@ -170,9 +211,12 @@ function initGame(canvasEl) {
       rightPressed = false;
       spacePressed = false;
       gameOver = false;
+      lives = MAX_LIVES;
+      score = 0;
       player.x = (canvas ? canvas.width : 480) / 2 - PLAYER_WIDTH / 2;
       player.y = (canvas ? canvas.height : 640) - PLAYER_HEIGHT - 10;
       bullets = [];
+      enemyBullets = [];
       enemies = [];
       enemyDirection = 1;
       createEnemies();
@@ -192,6 +236,12 @@ if (isBrowser && typeof module === 'undefined') {
     ctx.fillStyle = '#fff';
     game.bullets.forEach(bullet => {
       ctx.fillRect(bullet.x, bullet.y, BULLET_WIDTH, BULLET_HEIGHT);
+    });
+  }
+  function drawEnemyBullets() {
+    ctx.fillStyle = '#f80';
+    game.enemyBullets.forEach(b => {
+      ctx.fillRect(b.x, b.y, ENEMY_BULLET_WIDTH, ENEMY_BULLET_HEIGHT);
     });
   }
   function drawEnemies() {
@@ -218,6 +268,9 @@ if (isBrowser && typeof module === 'undefined') {
     ctx.fillText('← → : Move', 10, canvas.height - 40);
     ctx.fillText('Space: Shoot', 10, canvas.height - 24);
     ctx.fillText('R: Restart', 10, canvas.height - 8);
+    ctx.textAlign = 'right';
+    ctx.fillText(`Score: ${game.score}`, canvas.width - 10, canvas.height - 24);
+    ctx.fillText(`Lives: ${game.lives}`, canvas.width - 10, canvas.height - 8);
   }
   function gameLoop() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -228,10 +281,12 @@ if (isBrowser && typeof module === 'undefined') {
     }
     drawPlayer();
     drawBullets();
+    drawEnemyBullets();
     drawEnemies();
     drawLegend();
     game.movePlayer();
     game.moveBullets();
+    game.moveEnemyBullets();
     game.moveEnemies();
     game.checkCollisions();
     setTimeout(() => requestAnimationFrame(gameLoop), 40); // ~25 FPS
