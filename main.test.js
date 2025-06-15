@@ -62,13 +62,14 @@ describe('Space Invaders Game', () => {
     expect(enemy.alive).toBe(false);
   });
 
-  test('game over when enemy reaches player', () => {
+  test('player loses a life when enemy reaches player', () => {
     game.createEnemies();
     const enemy = game.enemies[0];
     enemy.x = game.player.x;
     enemy.y = game.player.y;
     enemy.alive = true;
+    const startingLives = game.lives;
     game.checkCollisions();
-    expect(game.gameOver).toBe(true);
+    expect(game.lives).toBe(startingLives - 1);
   });
 });
