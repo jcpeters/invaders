@@ -27,8 +27,16 @@ const ENEMY_SPEED = 1;
 const ENEMY_VERTICAL_SPEED = .25; // 1 = normal, 2 = double, 0.5 = half
 const ENEMY_BULLET_WIDTH = 4;
 const ENEMY_BULLET_HEIGHT = 10;
-const ENEMY_BULLET_SPEED = 5;
+const ENEMY_BULLET_SPEED = 1;
 const MAX_LIVES = 3;
+
+// Bunker configuration (moved to top-level for browser access)
+const BUNKER_WIDTH = 60;
+const BUNKER_HEIGHT = 20;
+const BUNKER_ROWS = 4; // vertical resolution of bunker
+const BUNKER_COLS = 12; // horizontal resolution of bunker
+const BUNKER_COUNT = 4;
+const BUNKER_Y = (typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 640) - PLAYER_HEIGHT - 60;
 
 // --- Refactor for testability ---
 function initGame(canvasEl) {
@@ -57,20 +65,66 @@ function initGame(canvasEl) {
   let enemyBullets = [];
   let enemies = [];
   let enemyDirection = 1;
+  let respawnTimeout = null;
+  let respawning = false;
 
-  function createEnemies() {
-    enemies = [];
-    for (let row = 0; row < ENEMY_ROWS; row++) {
-      for (let col = 0; col < ENEMY_COLS; col++) {
-        enemies.push({
-          x: ENEMY_X_OFFSET + col * (ENEMY_WIDTH + ENEMY_HORZ_PADDING),
-          y: ENEMY_Y_OFFSET + row * (ENEMY_HEIGHT + ENEMY_VERT_PADDING),
-          width: ENEMY_WIDTH,
-          height: ENEMY_HEIGHT,
-          color: '#f00',
-          alive: true,
-        });
+  // Each bunker is a 2D array of booleans (true = present)
+  let bunkers = [];
+
+  function createBunkers() {
+    bunkers = [];
+    const spacing = ((canvas ? canvas.width : 480) - BUNKER_COUNT * BUNKER_WIDTH) / (BUNKER_COUNT + 1);
+    for (let i = 0; i < BUNKER_COUNT; i++) {
+      const x = spacing + i * (BUNKER_WIDTH + spacing);
+      // 2D array for each bunker
+      const bunker = [];
+      for (let row = 0; row < BUNKER_ROWS; row++) {
+        bunker[row] = Array(BUNKER_COLS).fill(true);
       }
+      bunkers.push({ x, y: BUNKER_Y, cells: bunker });
+    }
+  }
+
+  // drawBunkers is defined later in the browser section; this duplicate is removed to avoid redundancy.
+
+  function checkBunkerCollisions() {
+    // Enemy bullets destroy from top
+    enemyBullets.forEach((b, bIdx) => {
+      bunkers.forEach(bunker => {
+        const relX = b.x - bunker.x;
+        const relY = b.y - bunker.y;
+        if (
+          relX >= 0 && relX < BUNKER_WIDTH &&
+          relY >= 0 && relY < BUNKER_HEIGHT
+        ) {
+          const col = Math.floor((relX / BUNKER_WIDTH) * BUNKER_COLS);
+          // Find first non-destroyed cell from top in this column
+          for (let row = 0; row < BUNKER_ROWS; row++) {
+            if (bunker.cells[row][col]) {
+              bunker.cells[row][col] = false;
+              enemyBullets.splice(bIdx, 1);
+              break;
+            }
+          }
+        }
+      });
+    });
+    // Player bullets destroy from bottom
+    bullets.forEach((b, bIdx) => {
+      bunkers.forEach(bunker => {
+        const relX = b.x - bunker.x;
+        const relY = b.y - bunker.y;
+        if (
+          relX >= 0 && relX < BUNKER_WIDTH &&
+          relY >= 0 && relY < BUNKER_HEIGHT
+        ) {
+          const col = Math.floor((relX / BUNKER_WIDTH) * BUNKER_COLS);
+          // Find first non-destroyed cell from bottom in this column
+          for (let row = BUNKER_ROWS - 1; row >= 0; row--) {
+            if (bunker.cells[row][col]) {
+              bunker.cells[row][col] = false;
+              bullets.splice(bIdx, 1);
+    break;
     }
   }
 
@@ -124,6 +178,8 @@ function initGame(canvasEl) {
   }
 
   function checkCollisions() {
+    let lifeLost = false;
+    // Bullet vs enemy
     bullets.forEach((bullet, bIdx) => {
       enemies.forEach((enemy, eIdx) => {
         if (
@@ -139,8 +195,24 @@ function initGame(canvasEl) {
         }
       });
     });
+    // Player bullet vs enemy bullet
+    bullets.forEach((bullet, bIdx) => {
+      enemyBullets.forEach((eb, ebIdx) => {
+        if (
+          bullet.x < eb.x + ENEMY_BULLET_WIDTH &&
+          bullet.x + BULLET_WIDTH > eb.x &&
+          bullet.y < eb.y + ENEMY_BULLET_HEIGHT &&
+          bullet.y + BULLET_HEIGHT > eb.y
+        ) {
+          bullets.splice(bIdx, 1);
+          enemyBullets.splice(ebIdx, 1);
+        }
+      });
+    });
+    // Enemy bullet vs player (only lose one life per frame)
     enemyBullets.forEach((bullet, bIdx) => {
       if (
+        !lifeLost &&
         bullet.x < player.x + player.width &&
         bullet.x + ENEMY_BULLET_WIDTH > player.x &&
         bullet.y < player.y + player.height &&
@@ -148,9 +220,15 @@ function initGame(canvasEl) {
       ) {
         enemyBullets.splice(bIdx, 1);
         lives -= 1;
-        if (lives <= 0) gameOver = true;
+        lifeLost = true;
+        if (lives <= 0) {
+          gameOver = true;
+        } else {
+          triggerRespawn();
+        }
       }
     });
+    // Enemy vs player (only lose one life per frame)
     enemies.forEach(enemy => {
       if (
         enemy.alive &&
@@ -158,11 +236,48 @@ function initGame(canvasEl) {
         enemy.x < player.x + player.width &&
         enemy.x + enemy.width > player.x
       ) {
-        lives -= 1;
+        if (!lifeLost) {
+          lives -= 1;
+          lifeLost = true;
+          if (lives <= 0) {
+            gameOver = true;
+          } else {
+            triggerRespawn();
+          }
+        }
         enemy.alive = false;
-        if (lives <= 0) gameOver = true;
+      }
+      // Lose life and respawn if any enemy reaches the bottom of the screen
+      if (
+        enemy.alive &&
+        enemy.y + enemy.height >= (canvas ? canvas.height : 640)
+      ) {
+        if (!lifeLost) {
+          lives -= 1;
+          lifeLost = true;
+          if (lives <= 0) {
+            gameOver = true;
+          } else {
+            triggerRespawn();
+          }
+        }
+        enemy.alive = false;
       }
     });
+    checkBunkerCollisions();
+  }
+
+  function triggerRespawn() {
+    respawning = true;
+    if (respawnTimeout) clearTimeout(respawnTimeout);
+    respawnTimeout = setTimeout(() => {
+      player.x = (canvas ? canvas.width : 480) / 2 - PLAYER_WIDTH / 2;
+      player.y = (canvas ? canvas.height : 640) - PLAYER_HEIGHT - 10;
+      bullets = [];
+      enemyBullets = [];
+      createEnemies(); // Recreate all enemies after respawn
+      respawning = false;
+    }, 1200); // 1.2 seconds pause
   }
 
   // Expose state and functions for testing
@@ -199,7 +314,10 @@ function initGame(canvasEl) {
     set spacePressed(v) { spacePressed = v; },
     get gameOver() { return gameOver; },
     set gameOver(v) { gameOver = v; },
+    get respawning() { return respawning; },
     createEnemies,
+    createBunkers,
+    get bunkers() { return bunkers; },
     movePlayer,
     moveBullets,
     moveEnemyBullets,
@@ -220,6 +338,7 @@ function initGame(canvasEl) {
       enemies = [];
       enemyDirection = 1;
       createEnemies();
+      createBunkers();
     }
   };
 }
@@ -252,6 +371,22 @@ if (isBrowser && typeof module === 'undefined') {
       }
     });
   }
+  function drawBunkers() {
+    ctx.save();
+    ctx.fillStyle = '#0ff';
+    game.bunkers.forEach(bunker => {
+      for (let row = 0; row < BUNKER_ROWS; row++) {
+        for (let col = 0; col < BUNKER_COLS; col++) {
+          if (bunker.cells[row][col]) {
+            const bx = bunker.x + (col * BUNKER_WIDTH) / BUNKER_COLS;
+            const by = bunker.y + (row * BUNKER_HEIGHT) / BUNKER_ROWS;
+            ctx.fillRect(bx, by, BUNKER_WIDTH / BUNKER_COLS, BUNKER_HEIGHT / BUNKER_ROWS);
+          }
+        }
+      }
+    });
+    ctx.restore();
+  }
   function drawGameOver() {
     ctx.fillStyle = '#fff';
     ctx.font = '48px sans-serif';
@@ -260,7 +395,7 @@ if (isBrowser && typeof module === 'undefined') {
     ctx.font = '24px sans-serif';
     ctx.fillText('Press R to Restart', canvas.width / 2, canvas.height / 2 + 50);
   }
-  function drawLegend() {
+  function drawStaticLegend() {
     ctx.fillStyle = '#fff';
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'left';
@@ -268,6 +403,10 @@ if (isBrowser && typeof module === 'undefined') {
     ctx.fillText('← → : Move', 10, canvas.height - 40);
     ctx.fillText('Space: Shoot', 10, canvas.height - 24);
     ctx.fillText('R: Restart', 10, canvas.height - 8);
+  }
+  function drawDynamicLegend() {
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px sans-serif';
     ctx.textAlign = 'right';
     ctx.fillText(`Score: ${game.score}`, canvas.width - 10, canvas.height - 24);
     ctx.fillText(`Lives: ${game.lives}`, canvas.width - 10, canvas.height - 8);
@@ -276,14 +415,29 @@ if (isBrowser && typeof module === 'undefined') {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (game.gameOver) {
       drawGameOver();
-      drawLegend();
+      drawStaticLegend();
+      drawDynamicLegend();
+      return;
+    }
+    if (game.respawning) {
+      ctx.globalAlpha = 0.5;
+      drawPlayer();
+      ctx.globalAlpha = 1.0;
+      drawBunkers();
+      drawDynamicLegend();
+      ctx.fillStyle = '#fff';
+      ctx.font = '32px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Get Ready!', canvas.width / 2, canvas.height / 2);
+      setTimeout(() => requestAnimationFrame(gameLoop), 40);
       return;
     }
     drawPlayer();
     drawBullets();
     drawEnemyBullets();
     drawEnemies();
-    drawLegend();
+    drawBunkers();
+    drawDynamicLegend();
     game.movePlayer();
     game.moveBullets();
     game.moveEnemyBullets();
@@ -291,6 +445,11 @@ if (isBrowser && typeof module === 'undefined') {
     game.checkCollisions();
     setTimeout(() => requestAnimationFrame(gameLoop), 40); // ~25 FPS
   }
+
+  // Draw static legend once at start
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawStaticLegend();
+
   document.addEventListener('keydown', e => {
     if (e.code === 'ArrowLeft') game.leftPressed = true;
     if (e.code === 'ArrowRight') game.rightPressed = true;
@@ -312,6 +471,7 @@ if (isBrowser && typeof module === 'undefined') {
     }
   });
   game.createEnemies();
+  game.createBunkers();
   gameLoop();
 }
 
